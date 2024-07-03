@@ -197,7 +197,7 @@ impl DeserializableHyleOutput for HyleOutput<Event> {
         // extract next_state
         let next_state: String = parts.remove(0).parse::<String>().unwrap();
         // extract identity
-        let identity: String = parts.remove(0).parse::<String>().unwrap();
+        let identity: String = Self::deserialize_cairo_bytesarray(&mut parts);
         // extract tx_hash
         let tx_hash: String = parts.remove(0).parse::<String>().unwrap();
 
@@ -217,7 +217,7 @@ impl DeserializableHyleOutput for HyleOutput<Event> {
                     program_outputs
                 }
             },
-            7 => {
+            _ => {
                 // extract from
                 let from = Self::deserialize_cairo_bytesarray(&mut parts);
                 // extract to
@@ -240,7 +240,6 @@ impl DeserializableHyleOutput for HyleOutput<Event> {
                     program_outputs
                 }
             }
-            _ => panic!("You're not parsing ERC20 or ML. Sorry bro not possible atm. Or your name is too long :eyes:"),
         };
 
         output
