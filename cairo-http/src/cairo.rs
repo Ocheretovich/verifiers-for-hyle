@@ -4,17 +4,16 @@ use cairo_platinum_prover::{
     execution_trace::build_main_trace,
     register_states::RegisterStates,
 };
+use hyle_contract::HyleOutput;
 use lambdaworks_math::field::fields::fft_friendly::stark_252_prime_field::Stark252PrimeField;
+use num::BigInt;
 use serde::{Deserialize, Serialize};
 use stark_platinum_prover::proof::options::{ProofOptions, SecurityLevel};
 use stark_platinum_prover::proof::stark::StarkProof;
 
 use crate::error::VerifierError;
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct Event {}
-
-pub fn verify_proof(proof: &Vec<u8>) -> Result<(), VerifierError> {
+pub fn verify_proof(proof: &Vec<u8>) -> Result<String, VerifierError> {
     let proof_path = "none";
     let proof_options = ProofOptions::new_secure(SecurityLevel::Conjecturable100Bits, 3);
     let mut bytes = proof.as_slice();
@@ -59,8 +58,20 @@ pub fn verify_proof(proof: &Vec<u8>) -> Result<(), VerifierError> {
         )));
     };
 
+    let program_output_bytes = &bytes[proof_len + 4 + pub_inputs_len..];
+
+    let Ok((program_output, _)) = bincode::serde::decode_from_slice::<HyleOutput<Erc20Event>, _>(
+        program_output_bytes,
+        bincode::config::standard(),
+    ) else {
+        return Err(VerifierError(format!(
+            "Error reading proof from file: {}",
+            proof_path
+        )));
+    };
+
     if verify_cairo_proof(&proof, &pub_inputs, &proof_options) {
-        return Ok(());
+        return Ok(serde_json::to_string(&program_output)?);
     } else {
         return Err(VerifierError(format!(
             "Error reading proof from file: {}",
@@ -136,4 +147,109 @@ fn write_proof(
 
     ///////////////////////
     bytes
+}
+
+#[derive(Serialize, Deserialize, Debug, Default)]
+pub struct Erc20Event {
+    from: Option<String>,
+    to: Option<String>,
+    amount: Option<u64>,
+    score: Option<u64>,
+}
+
+pub trait DeserializableHyleOutput {
+    fn i_to_w(s: String) -> String;
+    fn deserialize_cairo_bytesarray(data: &mut Vec<&str>) -> String;
+    fn deserialize(input: &str) -> Self;
+}
+
+impl DeserializableHyleOutput for HyleOutput<Erc20Event> {
+    /// Receives an int, change base to hex, decode it to ascii
+    fn i_to_w(s: String) -> String {
+        let int = s.parse::<BigInt>().expect("failed to parse the address");
+        let hex = hex::decode(format!("{:x}", int)).expect("failed to parse the address");
+        String::from_utf8(hex).expect("failed to parse the address")
+    }
+
+    /// BytesArray serialisation is composed of 3 values (if the data is less than 31bytes)
+    /// https://github.com/starkware-libs/cairo/blob/main/corelib/src/byte_array.cairo#L24-L34
+    /// WARNING: Deserialization is not yet robust.
+    /// TODO: pending_word_len not used.
+    /// TODO: add checking on inputs.
+    fn deserialize_cairo_bytesarray(data: &mut Vec<&str>) -> String {
+        let pending_word = data.remove(0).parse::<usize>().unwrap();
+        let _pending_word_len = data.remove(pending_word + 1).parse::<usize>().unwrap();
+        let mut word: String = "".into();
+        for _ in 0..pending_word + 1 {
+            let d: String = data.remove(0).into();
+            if d != "0" {
+                word.push_str(&Self::i_to_w(d));
+            }
+        }
+        word
+    }
+
+    /// Deserialize the output of the cairo erc20 contract.
+    /// elements for the "from" address
+    /// elements for the "to" address
+    /// [-2] element for the amount transfered
+    /// [-1] element for the next state
+    fn deserialize(input: &str) -> Self {
+        let trimmed = input.trim_matches(|c| c == '[' || c == ']');
+        let mut parts: Vec<&str> = trimmed.split_whitespace().collect();
+        // extract version
+        let version = parts.remove(0).parse::<u32>().unwrap();
+        // extract initial_state
+        let initial_state: String = parts.remove(0).parse::<String>().unwrap();
+        // extract next_state
+        let next_state: String = parts.remove(0).parse::<String>().unwrap();
+        // extract identity
+        let identity: String = parts.remove(0).parse::<String>().unwrap();
+        // extract tx_hash
+        let tx_hash: String = parts.remove(0).parse::<String>().unwrap();
+
+        let output = match parts.len() {
+            1 => {
+                let score = parts.remove(0).parse::<u64>().unwrap();
+                let program_outputs = Erc20Event {
+                    score: Some(score),
+                    ..Default::default()
+                };
+                HyleOutput {
+                    version,
+                    initial_state: initial_state.as_bytes().to_vec(),
+                    next_state: next_state.as_bytes().to_vec(),
+                    identity,
+                    tx_hash: tx_hash.as_bytes().to_vec(),
+                    program_outputs
+                }
+            },
+            7 => {
+                // extract from
+                let from = Self::deserialize_cairo_bytesarray(&mut parts);
+                // extract to
+                let to = Self::deserialize_cairo_bytesarray(&mut parts);
+                // extract amount
+                let amount = parts.remove(0).parse::<u64>().unwrap();
+
+                let program_outputs = Erc20Event {
+                    from: Some(from),
+                    to: Some(to),
+                    amount: Some(amount),
+                     ..Default::default()
+                };
+                HyleOutput {
+                    version,
+                    initial_state: initial_state.as_bytes().to_vec(),
+                    next_state: next_state.as_bytes().to_vec(),
+                    identity,
+                    tx_hash: tx_hash.as_bytes().to_vec(),
+                    program_outputs
+                }
+            }
+            _ => panic!("You're not parsing ERC20 or ML. Sorry bro not possible atm. Or your name is too long :eyes:"),
+        };
+
+        output
+    }
 }
