@@ -1,6 +1,6 @@
 use axum::response::IntoResponse;
 use axum::{extract, http::StatusCode, response::Response};
-use hyle_contract::HyleOutput;
+use cairo_verifier::utils::*;
 use log::{debug, info};
 use zip::ZipArchive;
 
@@ -8,8 +8,6 @@ use std::{
     collections::HashMap,
     io::{Cursor, Read},
 };
-
-use crate::cairo::*;
 
 fn decompress_zip_data(compressed_data: Vec<u8>) -> std::io::Result<Vec<u8>> {
     let cursor = Cursor::new(compressed_data);
@@ -109,20 +107,14 @@ pub async fn prove_handler(mut multipart: extract::Multipart) -> String {
 
     let (trace_memory, other_fields) = extract_trace_memory(multipart).await;
 
-    let mut proof = prove(&trace_memory.trace, &trace_memory.memory).unwrap();
-
     if let Some(output) = other_fields.get("output") {
+        let proof = prove(&trace_memory.trace, &trace_memory.memory, output).unwrap();
         info!("'output' field found in request parts, appending to proof '{output}'");
-        ///// HYLE CUSTOM /////
-        // Basically adding the program output to the proof
-        let program_output =
-            <HyleOutput<Erc20Event> as DeserializableHyleOutput>::deserialize(&output);
-        let program_output_bytes: Vec<u8> =
-            bincode::serde::encode_to_vec(&program_output, bincode::config::standard()).unwrap();
-        proof.extend(program_output_bytes);
+
+        return base64::encode(proof);
     }
 
-    String::from(base64::encode(proof))
+    String::from("")
 }
 
 /*
