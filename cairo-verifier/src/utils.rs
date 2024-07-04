@@ -8,19 +8,11 @@ use error::VerifierError;
 use hyle_contract::HyleOutput;
 use lambdaworks_math::field::fields::fft_friendly::stark_252_prime_field::Stark252PrimeField;
 use num::BigInt;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use stark_platinum_prover::proof::options::{ProofOptions, SecurityLevel};
 use stark_platinum_prover::proof::stark::StarkProof;
 
 pub mod error;
-
-#[derive(Serialize, Deserialize, Debug, Default)]
-pub struct Event {
-    from: Option<String>,
-    to: Option<String>,
-    amount: Option<u64>,
-    score: Option<u64>,
-}
 
 pub fn verify_proof(proof: &Vec<u8>) -> Result<String, VerifierError> {
     let proof_path = "none";
@@ -69,7 +61,7 @@ pub fn verify_proof(proof: &Vec<u8>) -> Result<String, VerifierError> {
     };
     let program_output_bytes = &bytes[proof_len + 4 + pub_inputs_len..];
 
-    let Ok((program_output, _)) = bincode::serde::decode_from_slice::<HyleOutput<Event>, _>(
+    let Ok((program_output, _)) = bincode::serde::decode_from_slice::<HyleOutput<Vec<u8>>, _>(
         program_output_bytes,
         bincode::config::standard(),
     ) else {
@@ -161,7 +153,7 @@ fn write_proof(
 
     ///// HYLE CUSTOM /////
     // Basically adding the program output to the proof
-    let program_output = <HyleOutput<Event> as DeserializableHyleOutput>::deserialize(&output);
+    let program_output = deserialize_output(&output);
     let program_output_bytes: Vec<u8> =
         bincode::serde::encode_to_vec(&program_output, bincode::config::standard()).unwrap();
     bytes.extend(program_output_bytes);
@@ -169,98 +161,56 @@ fn write_proof(
     bytes
 }
 
-pub trait DeserializableHyleOutput {
-    fn i_to_w(s: String) -> String;
-    fn deserialize_cairo_bytesarray(data: &mut Vec<&str>) -> String;
-    fn deserialize(input: &str) -> Self;
+/// Receives an int, change base to hex, decode it to ascii
+fn i_to_w(s: String) -> String {
+    let int = s.parse::<BigInt>().expect("failed to parse the address");
+    let hex = hex::decode(format!("{:x}", int)).expect("failed to parse the address");
+    String::from_utf8(hex).expect("failed to parse the address")
 }
 
-impl DeserializableHyleOutput for HyleOutput<Event> {
-    /// Receives an int, change base to hex, decode it to ascii
-    fn i_to_w(s: String) -> String {
-        let int = s.parse::<BigInt>().expect("failed to parse the address");
-        let hex = hex::decode(format!("{:x}", int)).expect("failed to parse the address");
-        String::from_utf8(hex).expect("failed to parse the address")
-    }
-
-    /// BytesArray serialisation is composed of 3 values (if the data is less than 31bytes)
-    /// https://github.com/starkware-libs/cairo/blob/main/corelib/src/byte_array.cairo#L24-L34
-    /// WARNING: Deserialization is not yet robust.
-    /// TODO: pending_word_len not used.
-    /// TODO: add checking on inputs.
-    fn deserialize_cairo_bytesarray(data: &mut Vec<&str>) -> String {
-        let pending_word = data.remove(0).parse::<usize>().unwrap();
-        let _pending_word_len = data.remove(pending_word + 1).parse::<usize>().unwrap();
-        let mut word: String = "".into();
-        for _ in 0..pending_word + 1 {
-            let d: String = data.remove(0).into();
-            if d != "0" {
-                word.push_str(&Self::i_to_w(d));
-            }
+/// BytesArray serialisation is composed of 3 values (if the data is less than 31bytes)
+/// https://github.com/starkware-libs/cairo/blob/main/corelib/src/byte_array.cairo#L24-L34
+/// WARNING: Deserialization is not yet robust.
+/// TODO: pending_word_len not used.
+/// TODO: add checking on inputs.
+fn deserialize_cairo_bytesarray(data: &mut Vec<&str>) -> String {
+    let pending_word = data.remove(0).parse::<usize>().unwrap();
+    let _pending_word_len = data.remove(pending_word + 1).parse::<usize>().unwrap();
+    let mut word: String = "".into();
+    for _ in 0..pending_word + 1 {
+        let d: String = data.remove(0).into();
+        if d != "0" {
+            word.push_str(&i_to_w(d));
         }
-        word
     }
+    word
+}
 
-    /// Deserialize the output of the cairo erc20 contract.
-    /// elements for the "from" address
-    /// elements for the "to" address
-    /// [-2] element for the amount transfered
-    /// [-1] element for the next state
-    fn deserialize(input: &str) -> Self {
-        let trimmed = input.trim_matches(|c| c == '[' || c == ']');
-        let mut parts: Vec<&str> = trimmed.split_whitespace().collect();
-        // extract version
-        let version = parts.remove(0).parse::<u32>().unwrap();
-        // extract initial_state
-        let initial_state: String = parts.remove(0).parse::<String>().unwrap();
-        // extract next_state
-        let next_state: String = parts.remove(0).parse::<String>().unwrap();
-        // extract identity
-        let identity: String = Self::deserialize_cairo_bytesarray(&mut parts);
-        // extract tx_hash
-        let tx_hash: String = parts.remove(0).parse::<String>().unwrap();
+/// Deserialize the output of the cairo erc20 contract.
+/// elements for the "from" address
+/// elements for the "to" address
+/// [-2] element for the amount transfered
+/// [-1] element for the next state
+fn deserialize_output(input: &str) -> HyleOutput<Vec<u8>> {
+    let trimmed = input.trim_matches(|c| c == '[' || c == ']');
+    let mut parts: Vec<&str> = trimmed.split_whitespace().collect();
+    // extract version
+    let version = parts.remove(0).parse::<u32>().unwrap();
+    // extract initial_state
+    let initial_state: String = parts.remove(0).parse::<String>().unwrap();
+    // extract next_state
+    let next_state: String = parts.remove(0).parse::<String>().unwrap();
+    // extract identity
+    let identity: String = deserialize_cairo_bytesarray(&mut parts);
+    // extract tx_hash
+    let tx_hash: String = parts.remove(0).parse::<String>().unwrap();
 
-        let output = match parts.len() {
-            1 => {
-                let score = parts.remove(0).parse::<u64>().unwrap();
-                let program_outputs = Event {
-                    score: Some(score),
-                    ..Default::default()
-                };
-                HyleOutput {
-                    version,
-                    initial_state: initial_state.as_bytes().to_vec(),
-                    next_state: next_state.as_bytes().to_vec(),
-                    identity,
-                    tx_hash: tx_hash.as_bytes().to_vec(),
-                    program_outputs
-                }
-            },
-            _ => {
-                // extract from
-                let from = Self::deserialize_cairo_bytesarray(&mut parts);
-                // extract to
-                let to = Self::deserialize_cairo_bytesarray(&mut parts);
-                // extract amount
-                let amount = parts.remove(0).parse::<u64>().unwrap();
-
-                let program_outputs = Event {
-                    from: Some(from),
-                    to: Some(to),
-                    amount: Some(amount),
-                     ..Default::default()
-                };
-                HyleOutput {
-                    version,
-                    initial_state: initial_state.as_bytes().to_vec(),
-                    next_state: next_state.as_bytes().to_vec(),
-                    identity,
-                    tx_hash: tx_hash.as_bytes().to_vec(),
-                    program_outputs
-                }
-            }
-        };
-
-        output
+    HyleOutput {
+        version,
+        initial_state: initial_state.as_bytes().to_vec(),
+        next_state: next_state.as_bytes().to_vec(),
+        identity,
+        tx_hash: tx_hash.as_bytes().to_vec(),
+        program_outputs: input.as_bytes().to_vec(),
     }
 }
