@@ -1,11 +1,13 @@
 use crate::logger::setup_logger;
 
 use anyhow::{Context, Result};
+use axum::extract::DefaultBodyLimit;
 use axum::routing::post;
 use axum::Router;
 use log::info;
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
+use tower_http::cors::CorsLayer;
 
 mod endpoints;
 mod logger;
@@ -19,6 +21,8 @@ async fn main() -> Result<()> {
 
     let app = Router::new()
         .route("/prove", post(endpoints::prove_handler))
+        .layer(CorsLayer::permissive())
+        .layer(DefaultBodyLimit::disable()) // Danger, on limite plus la taille
         .route("/verify", post(endpoints::verify_handler));
 
     // run our app with hyper
