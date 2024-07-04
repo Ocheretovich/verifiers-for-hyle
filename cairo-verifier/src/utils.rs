@@ -211,6 +211,6 @@ fn deserialize_output(input: &str) -> HyleOutput<Vec<u8>> {
         next_state: next_state.as_bytes().to_vec(),
         identity,
         tx_hash: tx_hash.as_bytes().to_vec(),
-        program_outputs: input.as_bytes().to_vec(),
+        program_outputs: parts.join(" ").as_bytes().to_vec(),
     }
 }
