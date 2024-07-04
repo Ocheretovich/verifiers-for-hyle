@@ -205,12 +205,16 @@ fn deserialize_output(input: &str) -> HyleOutput<Vec<u8>> {
     // extract tx_hash
     let tx_hash: String = parts.remove(0).parse::<String>().unwrap();
 
+    let output = parts.join(" ").as_bytes().to_vec();
+    let mut program_outputs = vec![output.len() as u8];
+    program_outputs.extend(&output);
+
     HyleOutput {
         version,
         initial_state: initial_state.as_bytes().to_vec(),
         next_state: next_state.as_bytes().to_vec(),
         identity,
         tx_hash: tx_hash.as_bytes().to_vec(),
-        program_outputs: parts.join(" ").as_bytes().to_vec(),
+        program_outputs: program_outputs,
     }
 }

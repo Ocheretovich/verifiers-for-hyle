@@ -15,6 +15,7 @@ async fn main() -> Result<()> {
     setup_logger().context("Setup logger")?;
 
     info!("Starting Cairo Http!");
+    info!("0.0.0.0:3000");
 
     let app = Router::new()
         .route("/prove", post(endpoints::prove_handler))
