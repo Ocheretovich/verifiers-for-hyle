@@ -1,6 +1,6 @@
 # Verifiers for Hylé
 
-This repository contains various programs to verify zero-knowledge proofs within the (Hylé blockchain)[http://github.com/hyle-org/hyle].
+This repository contains various programs to verify zero-knowledge proofs within the ([Hylé blockchain])[http://github.com/hyle-org/hyle].
 
 Structure:
 - `hyle-contract` works as a minimal SDK, specifying required outputs for verifying ZK proofs.
